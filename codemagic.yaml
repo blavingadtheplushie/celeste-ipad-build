@@ -22,7 +22,10 @@ workflows:
           bash /tmp/di.sh --version 10.0.402 --install-dir "$HOME/.dotnet"
           echo "DOTNET_ROOT=$HOME/.dotnet" >> $CM_ENV
           echo "PATH=$HOME/.dotnet:$PATH" >> $CM_ENV
-          "$HOME/.dotnet/dotnet" workload install ios
+          # pin iOS workload to the Xcode 26.5 SDK on the runner (27.x needs iOS 27 SDK)
+          echo '{"microsoft.net.sdk.ios":"26.5.10318/10.0.100"}' > /tmp/rollback.json
+          "$HOME/.dotnet/dotnet" workload install ios --from-rollback-file /tmp/rollback.json
+          "$HOME/.dotnet/dotnet" workload list
           git clone https://github.com/Souls-R/celeste-ipados "$HOME/port"
           git -C "$HOME/port" checkout --detach "$PORT_COMMIT"
           python3 -m venv "$HOME/venv"

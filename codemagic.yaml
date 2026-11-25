@@ -1,0 +1,70 @@
+workflows:
+  celeste-ipa:
+    name: Celeste iPadOS IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      xcode: latest
+      vars:
+        PORT_COMMIT: 04e19c4c7673569305042c7a97ef6e2be5a1a498
+    scripts:
+      - name: env
+        script: |
+          set -euo pipefail
+          xcodebuild -version; sw_vers; df -h ~ | tail -1
+          echo "BUILD_ROOT=$HOME/CelesteBuild" >> $CM_ENV
+      - name: dotnet + python
+        script: |
+          set -euo pipefail
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/di.sh
+          bash /tmp/di.sh --version 10.0.402 --install-dir "$HOME/.dotnet"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $CM_ENV
+          echo "PATH=$HOME/.dotnet:$PATH" >> $CM_ENV
+          "$HOME/.dotnet/dotnet" workload install ios
+          git clone https://github.com/Souls-R/celeste-ipados "$HOME/port"
+          git -C "$HOME/port" checkout --detach "$PORT_COMMIT"
+          python3 -m venv "$HOME/venv"
+          "$HOME/venv/bin/pip" install -r "$HOME/port/requirements.txt"
+          echo "PATH=$HOME/venv/bin:$HOME/.dotnet:$PATH" >> $CM_ENV
+      - name: inputs
+        script: |
+          set -euo pipefail
+          mkdir -p "$HOME/in" && cd "$HOME/in"
+          for f in Celeste.app.zip fmod-ios.zip; do
+            curl -fsSL -o "$f.enc" "https://github.com/blavingadtheplushie/celeste-ipad-build/releases/download/inputs/$f.enc"
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:INPUTS_KEY -in "$f.enc" -out "$f"; rm "$f.enc"
+          done
+          ditto -x -k Celeste.app.zip game && rm Celeste.app.zip
+          ditto -x -k fmod-ios.zip fmod && rm fmod-ios.zip
+          app=$(find game -maxdepth 3 -name 'Celeste.app' -type d | head -1)
+          echo "GAME_APP=$PWD/$app" >> $CM_ENV
+          echo "FMOD_SDK=$PWD/fmod" >> $CM_ENV
+          shasum -a 256 "$app/Contents/Resources/Celeste.exe"
+          curl -fsSL -o NotoSansCJKsc-Medium.otf https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Medium.otf
+          echo "NOTICE_FONT=$PWD/NotoSansCJKsc-Medium.otf" >> $CM_ENV
+      - name: deps
+        script: cd "$HOME/port" && python build.py deps --output "$BUILD_ROOT/deps"
+      - name: prepare
+        script: |
+          cd "$HOME/port"
+          ls "$FMOD_SDK"; find "$FMOD_SDK" -name 'libfmod*iphoneos.a' | head
+          sdk=$(dirname "$(find "$FMOD_SDK" -name libfmod_iphoneos.a | head -1)")
+          python build.py prepare --game-app "$GAME_APP" --deps "$BUILD_ROOT/deps" \
+            --fmod-sdk "$FMOD_SDK" --font "$NOTICE_FONT" --output "$BUILD_ROOT/native" \
+            --bundle-id 'fr.notri1.celeste'
+      - name: native
+        script: cd "$HOME/port" && python build.py native --work "$BUILD_ROOT/native" --allow-newer-xcode
+      - name: encrypt ipa
+        script: |
+          set -euo pipefail
+          mkdir -p "$HOME/out"
+          ipa=$(ls "$BUILD_ROOT"/native/output/*.ipa)
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:INPUTS_KEY -in "$ipa" -out "$HOME/out/Celeste.ipa.enc"
+      - name: collect logs
+        script: |
+          mkdir -p "$HOME/out/logs"; cp -R "$BUILD_ROOT"/native/logs "$HOME/out/logs/" 2>/dev/null || true
+          find "$BUILD_ROOT/deps" -name '*.log' -exec cp {} "$HOME/out/logs/" \; 2>/dev/null || true
+        ignore_failure: true
+    artifacts:
+      - $HOME/out/Celeste.ipa.enc
+      - $HOME/out/logs/**

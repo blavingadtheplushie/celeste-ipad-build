@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -41,11 +41,16 @@ jobs:
           git -C "$RUNNER_TEMP/port" checkout --detach "$PORT_COMMIT"
           python -m pip install -r "$RUNNER_TEMP/port/requirements.txt"
 
-      - name: Fetch private inputs (game + FMOD) from release "inputs"
+      - name: Fetch encrypted inputs (game + FMOD) from release "inputs"
+        env:
+          INPUTS_KEY: ${{ secrets.INPUTS_KEY }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/in" && cd "$RUNNER_TEMP/in"
-          gh release download inputs -R "$GITHUB_REPOSITORY" -p 'Celeste.app.zip' -p 'fmod-ios.zip'
+          gh release download inputs -R "$GITHUB_REPOSITORY" -p 'Celeste.app.zip.enc' -p 'fmod-ios.zip.enc'
+          for f in Celeste.app.zip fmod-ios.zip; do
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:INPUTS_KEY -in "$f.enc" -out "$f"; rm "$f.enc"
+          done
           ditto -x -k Celeste.app.zip game
           ditto -x -k fmod-ios.zip fmod
           app=$(find game -maxdepth 3 -name 'Celeste.app' -type d | head -1)
@@ -80,9 +85,9 @@ jobs:
             ${{ env.BUILD_ROOT }}/deps/**/*.log
           if-no-files-found: ignore
 
-      - name: Publish IPA to private release "ipa"
-        run: |
-          set -euo pipefail
-          ipa=$(ls "$BUILD_ROOT"/native/output/*.ipa)
-          gh release view ipa -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create ipa -R "$GITHUB_REPOSITORY" -t "Celeste IPA" -n "unsigned, sideload with SideStore/LiveContainer"
-          gh release upload ipa "$ipa" --clobber -R "$GITHUB_REPOSITORY"
+      - name: Upload IPA (artifact, not public release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa
+          path: ${{ env.BUILD_ROOT }}/native/output/*.ipa
+          retention-days: 7

@@ -55,7 +55,15 @@ workflows:
             --fmod-sdk "$FMOD_SDK" --font "$NOTICE_FONT" --output "$BUILD_ROOT/native" \
             --bundle-id 'fr.notri1.celeste'
       - name: native
-        script: cd "$HOME/port" && python build.py native --work "$BUILD_ROOT/native" --allow-newer-xcode
+        script: |
+          cd "$HOME/port"
+          if ! python build.py native --work "$BUILD_ROOT/native" --allow-newer-xcode; then
+            echo "===== native.log (errors) ====="
+            grep -nE 'error|Error|ERROR' "$BUILD_ROOT/native/logs/native.log" | head -80 || true
+            echo "===== native.log (tail) ====="
+            tail -150 "$BUILD_ROOT/native/logs/native.log" || true
+            exit 1
+          fi
       - name: encrypt ipa
         script: |
           set -euo pipefail

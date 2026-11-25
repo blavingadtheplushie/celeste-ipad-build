@@ -85,9 +85,17 @@ jobs:
             ${{ env.BUILD_ROOT }}/deps/**/*.log
           if-no-files-found: ignore
 
-      - name: Upload IPA (artifact, not public release)
+      - name: Encrypt IPA (artifacts of public repos are downloadable by anyone)
+        env:
+          INPUTS_KEY: ${{ secrets.INPUTS_KEY }}
+        run: |
+          set -euo pipefail
+          ipa=$(ls "$BUILD_ROOT"/native/output/*.ipa)
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:INPUTS_KEY -in "$ipa" -out "$RUNNER_TEMP/Celeste.ipa.enc"
+
+      - name: Upload encrypted IPA
         uses: actions/upload-artifact@v4
         with:
           name: ipa
-          path: ${{ env.BUILD_ROOT }}/native/output/*.ipa
+          path: ${{ runner.temp }}/Celeste.ipa.enc
           retention-days: 7

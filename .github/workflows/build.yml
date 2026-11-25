@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 180
     env:
       PORT_COMMIT: 04e19c4c7673569305042c7a97ef6e2be5a1a498
@@ -19,7 +19,7 @@ jobs:
           set -euo pipefail
           echo "BUILD_ROOT=$RUNNER_TEMP/CelesteBuild" >> "$GITHUB_ENV"
           ls -d /Applications/Xcode*.app
-          x=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          x=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1); [ -n "$x" ] || x=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
           sudo xcode-select -s "$x"
           xcodebuild -version
 

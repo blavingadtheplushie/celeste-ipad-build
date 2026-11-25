@@ -1,0 +1,88 @@
+name: Build Celeste iPadOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      PORT_COMMIT: 04e19c4c7673569305042c7a97ef6e2be5a1a498
+      GH_TOKEN: ${{ github.token }}
+      BUILD_ROOT: ${{ runner.temp }}/CelesteBuild
+    steps:
+      - name: Select newest Xcode 26
+        run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode*.app
+          x=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$x"
+          xcodebuild -version
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.402'
+
+      - name: Install .NET iOS workload
+        run: dotnet workload install ios
+
+      - name: Fetch port (Souls-R/celeste-ipados, pinned)
+        run: |
+          set -euo pipefail
+          git clone https://github.com/Souls-R/celeste-ipados "$RUNNER_TEMP/port"
+          git -C "$RUNNER_TEMP/port" checkout --detach "$PORT_COMMIT"
+          python -m pip install -r "$RUNNER_TEMP/port/requirements.txt"
+
+      - name: Fetch private inputs (game + FMOD) from release "inputs"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/in" && cd "$RUNNER_TEMP/in"
+          gh release download inputs -R "$GITHUB_REPOSITORY" -p 'Celeste.app.zip' -p 'fmod-ios.zip'
+          ditto -x -k Celeste.app.zip game
+          ditto -x -k fmod-ios.zip fmod
+          app=$(find game -maxdepth 3 -name 'Celeste.app' -type d | head -1)
+          echo "GAME_APP=$PWD/$app" >> "$GITHUB_ENV"
+          echo "FMOD_SDK=$PWD/fmod" >> "$GITHUB_ENV"
+          shasum -a 256 "$app/Contents/Resources/Celeste.exe"
+          curl -fsSL -o NotoSansCJKsc-Medium.otf https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Medium.otf
+          echo "NOTICE_FONT=$PWD/NotoSansCJKsc-Medium.otf" >> "$GITHUB_ENV"
+
+      - name: deps
+        working-directory: ${{ runner.temp }}/port
+        run: python build.py deps --output "$BUILD_ROOT/deps"
+
+      - name: prepare
+        working-directory: ${{ runner.temp }}/port
+        run: |
+          python build.py prepare --game-app "$GAME_APP" --deps "$BUILD_ROOT/deps" \
+            --fmod-sdk "$FMOD_SDK" --font "$NOTICE_FONT" --output "$BUILD_ROOT/native" \
+            --bundle-id 'fr.notri1.celeste'
+
+      - name: native
+        working-directory: ${{ runner.temp }}/port
+        run: python build.py native --work "$BUILD_ROOT/native" --allow-newer-xcode
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: |
+            ${{ env.BUILD_ROOT }}/native/logs
+            ${{ env.BUILD_ROOT }}/deps/**/*.log
+          if-no-files-found: ignore
+
+      - name: Publish IPA to private release "ipa"
+        run: |
+          set -euo pipefail
+          ipa=$(ls "$BUILD_ROOT"/native/output/*.ipa)
+          gh release view ipa -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create ipa -R "$GITHUB_REPOSITORY" -t "Celeste IPA" -n "unsigned, sideload with SideStore/LiveContainer"
+          gh release upload ipa "$ipa" --clobber -R "$GITHUB_REPOSITORY"
